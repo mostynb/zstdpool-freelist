@@ -18,6 +18,7 @@
 package zstdpool
 
 import (
+	"errors"
 	"io"
 	"sync"
 
@@ -117,6 +118,52 @@ func (p *DecoderPool) Put(d *zstd.Decoder) {
 	return
 }
 
+// TargetSize functions take the current size of a pool, and return the
+// target size (which must not be larger than the current size), and should
+// not be negative.
+type TargetSize func(currentSize int) (targetSize int)
+
+var errTargetTooLarge = errors.New("TargetSize functions should not return a value larger than the current size")
+
+var errNegativeTarget = errors.New("TargetSize functions should not return negative values")
+
+var errMiscount = errors.New("internal error: miscount while resizing pool")
+
+// Resize takes a TargetSize function ts, which it asks for a target size to
+// reduce the pool size to. It returns the original size of the pool, the new
+// size of the pool, and an error if something went wrong.
+func (p *DecoderPool) Resize(ts TargetSize) (old, new int, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	old = p.available
+
+	targetSize := ts(old)
+	if targetSize == old {
+		return old, old, nil
+	}
+
+	if targetSize > p.available {
+		return old, old, errTargetTooLarge
+	}
+
+	if targetSize < 0 {
+		return old, old, errNegativeTarget
+	}
+
+	for p.available > targetSize {
+		if p.head == nil {
+			return old, p.available, errMiscount
+		}
+
+		p.head.d.Reset(nil)
+		p.head = p.head.next
+		p.available--
+	}
+
+	return old, targetSize, nil
+}
+
 // DecoderReadCloser implements io.Readcloser by wrapping a *zstd.Decoder
 // and returning it to a DecoderPool when Close() is called.
 type DecoderReadCloser struct {
@@ -185,4 +232,39 @@ func (p *EncoderPool) Put(e *zstd.Encoder) {
 	enc := &encoder{e: e, next: p.head}
 	p.head = enc
 	return
+}
+
+// Resize takes a TargetSize function ts, which it asks for a target size to
+// reduce the pool size to. It returns the original size of the pool, the new
+// size of the pool, and an error if something went wrong.
+func (p *EncoderPool) Resize(ts TargetSize) (old, new int, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	old = p.available
+
+	targetSize := ts(old)
+	if targetSize == old {
+		return old, old, nil
+	}
+
+	if targetSize > p.available {
+		return old, old, errTargetTooLarge
+	}
+
+	if targetSize < 0 {
+		return old, old, errNegativeTarget
+	}
+
+	for p.available > targetSize {
+		if p.head == nil {
+			return old, p.available, errMiscount
+		}
+
+		p.head.e.Reset(nil)
+		p.head = p.head.next
+		p.available--
+	}
+
+	return old, targetSize, nil
 }
