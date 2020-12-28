@@ -172,7 +172,8 @@ type DecoderReadCloser struct {
 	rc io.ReadCloser
 }
 
-// Close wraps the *zstd.Decoder's Close function.
+// Close does not close the underlying *zstd.Decoder, but instead returns
+// it to the DecoderPool.
 func (c *DecoderReadCloser) Close() {
 	c.p.Put(c.d)
 }
