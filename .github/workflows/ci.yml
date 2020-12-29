@@ -19,5 +19,6 @@ jobs:
       run: .github/workflows/check_formatting.sh
     - name: Test
       run: |
+        export GO111MODULE=on
         go test ./...
         go test -race ./...
